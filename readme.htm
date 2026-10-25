@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="author" content="eqagunn">
+  <meta name="description" content="An ASI patch for combat-associated crashes in Bioshock 2 Remastered, using validated actor-array pattern scanning.">
+  <title>Bioshock 2 Remastered Combat Crash Fix</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.65 system-ui, sans-serif; }
+    body { max-width: 56rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: clamp(1.8rem, 5vw, 2.7rem); line-height: 1.2; margin-bottom: .65rem; }
+    h2 { font-size: 1.35rem; margin: 2.2rem 0 .65rem; }
+    p, ul, ol { margin: .7rem 0; }
+    li { margin: .4rem 0; }
+    a { color: #0869af; text-underline-offset: .15em; }
+    code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; overflow-wrap: anywhere; }
+    .byline { font-weight: 600; }
+    .platform { color: #536171; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: .94rem; }
+    th, td { border: 1px solid #a6afb8; padding: .55rem .7rem; text-align: left; vertical-align: top; }
+    th { background: #edf2f6; }
+    footer { border-top: 1px solid #a6afb8; margin-top: 2.5rem; padding-top: .7rem; }
+    @media (prefers-color-scheme: dark) {
+      a { color: #78bfff; }
+      .platform { color: #abb8c7; }
+      th { background: #202a35; }
+      th, td, footer { border-color: #536171; }
+    }
+    @media print { body { max-width: none; padding: 0; } h2 { break-after: avoid; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Bioshock 2 Remastered Combat Crash Fix</h1>
+  <p class="byline">by eqagunn - v1.0.0 (2026-10-25)</p>
+  <p class="platform">Windows x86 &middot; Ultimate ASI Loader</p>
+</header>
+<main>
+  <p>An ASI plugin targeting invalid-memory reads observed in the game's audio callback during sustained weapon fire. It prevents an avoidable reallocation of the level's actor array during cleanup.</p>
+  <p>The plugin patches the running process. The game executable on disk stays unchanged, and no configuration file is required.</p>
+
+  <h2 id="installation">Installation</h2>
+  <ol>
+    <li>Close the game.</li>
+    <li>Install the <strong>Win32/x86</strong> edition of <a href="https://github.com/ThirteenAG/Ultimate-ASI-Loader">Ultimate ASI Loader</a> in the folder containing <code>Bioshock2HD.exe</code>, typically <code>Build\Final</code>.</li>
+    <li>Copy <code>BioShock2HDCombatCrashFix.asi</code> beside the executable, or into its <code>scripts</code> or <code>plugins</code> folder as allowed by the loader configuration.</li>
+    <li>Launch the game normally. Logging is optional and disabled by default.</li>
+  </ol>
+  <p>Keep the loader's default <code>DontLoadFromDllMain=1</code>. The plugin uses the <code>InitializeASI</code> entry point for initialization outside the loader lock. The loader is not included. Source files and tests are optional for installation.</p>
+
+  <h2 id="fix">What the fix does</h2>
+  <p>The game maintains an array of pointers to actors: objects belonging to a level. A cleanup routine compacts surviving entries and removes the unused tail. That tail-removal operation can shrink the backing allocation, potentially moving the array and releasing its old storage.</p>
+  <p>The audio thread also reads this array during an FMOD callback. Crash dumps show invalid reads through an array pointer, and a hardware write breakpoint identifies a gameplay-thread cleanup path that can replace that pointer. These observations support an allocation-lifetime race:</p>
+  <ol>
+    <li>The audio thread obtains the array's address.</li>
+    <li>Gameplay cleanup reallocates the array and releases its old storage.</li>
+    <li>The audio thread reads through the old address.</li>
+  </ol>
+  <p>The plugin replaces this tail-removal call with an update to the compacted actor count. It retains the array's backing allocation and capacity. Actor compaction still runs, removed entries stay outside the active count, and removed actors are not kept alive by the fix.</p>
+  <p>The trade-off is retaining spare pointer-array capacity. Growth allocations still happen. The change addresses this particular cleanup path; other actor-array lifetime changes and unrelated crashes remain outside its scope. The complete failing thread interleaving was not captured instruction by instruction.</p>
+
+  <h2 id="compatibility">Compatibility and pattern scanning</h2>
+  <p>Detection uses structural pattern scanning without EXE hashes, timestamps, build profiles, or fixed patch addresses. It scans readable executable sections and validates:</p>
+  <ul>
+    <li>The actor-compaction loop, including its null/deletion checks, scan and retained indices, index-repair call, copy operation, and control-flow targets.</li>
+    <li>The relationship between the actor-array field and its element-count field.</li>
+    <li>The tail-removal arguments and a compatible pointer-array removal/shrink routine, reached directly or through a checked forwarding wrapper.</li>
+    <li>A complete patch range and a compatible function epilogue.</li>
+  </ul>
+  <p>Registers, supported field displacements, relative calls, and the patch location are derived from the matched code. The replacement is generated for that match.</p>
+  <p><strong>Exactly one validated match is required.</strong> Missing, ambiguous, partially modified, unreadable, or incompatible patterns are left untouched. Matching no-shrink instructions are recognized without another write.</p>
+  <p>The plugin supports executable layouts retaining a recognized instruction structure. Compatibility with every released or future EXE version has not been established. Different compiler transformations, engine changes, or packed code may require additional pattern support. Storefront-wide and combined-mod compatibility need independent testing.</p>
+  <p>Use this plugin with the <strong>32-bit Bioshock 2 Remastered executable</strong>.</p>
+
+  <h2 id="logging">Optional startup log</h2>
+  <p>To enable logging, create an empty file named <code>Bioshock2HDCombatCrashFix.log</code> <strong>in the same folder as the ASI</strong> before starting the game. Check that Windows has not added a hidden <code>.txt</code> extension.</p>
+  <p>The plugin writes only when that file already exists and is writable. It replaces the file's contents at startup and never creates the file itself. The log filename stays the same if the ASI is renamed. No log file is included in the download.</p>
+  <p>With no writable log file, the patch still runs and produces no file or Windows debug-output messages. To disable logging, close the game and delete the log file.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Status</th><th scope="col">Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>APPLIED</code></td><td>A unique validated pattern was patched and the memory write verified.</td></tr>
+        <tr><td><code>ALREADY_PATCHED</code></td><td>Matching no-shrink instructions are present; no write was needed.</td></tr>
+        <tr><td><code>UNSUPPORTED</code></td><td>No compatible actor-compaction pattern was found.</td></tr>
+        <tr><td><code>REFUSED</code></td><td>Validation failed or was ambiguous, or code-page access could not be obtained.</td></tr>
+        <tr><td><code>FAILED</code></td><td>Write/cache verification failed and the original instructions were restored.</td></tr>
+        <tr><td><code>APPLIED_WITH_WARNING</code></td><td>The patch is active, but restoring a code-page protection failed.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>When checking compatibility, enable logging and verify the startup result. <code>APPLIED</code> confirms installation of the patch; it does not guarantee elimination of every possible crash. If an existing log stays empty, check its permissions and the loader's diagnostic log, plugin search folders, and x86 architecture.</p>
+
+  <h2 id="tools">Investigation tools</h2>
+  <ul>
+    <li><strong>Windows Error Reporting full crash dumps</strong> captured access violations, registers, thread stacks, and relevant process memory.</li>
+    <li><strong>WinDbg</strong> provided live debugging and hardware write breakpoints on the actor-array pointer field. These located the pointer-writing allocator path and its gameplay-thread callers.</li>
+    <li><strong>Python with pefile and Capstone</strong> inspected PE images and disassembled the audio callback, array-removal routine, and actor-compaction code. This identified the tail-removal operation and the instruction change needed to retain the backing allocation.</li>
+  </ul>
+
+  <h2 id="source">Source and validation</h2>
+  <p>The source is written in C and built with <strong>MinGW-w64 GCC</strong>. The ASI is a PE32 DLL with ASLR and NX, imports only <code>kernel32.dll</code>, and requires no Visual C++ or MinGW runtime DLL.</p>
+  <p>Validation covers one real executable with a unique match, 82 native pattern-matcher cases, 21 compiled-DLL initialization cases, and six replacement-instruction execution cases. The DLL cases include opt-in logging with present, missing, and unwritable files. The compiled VERSIONINFO is also checked.</p>
+  <p><strong>Unicorn x86 CPU emulation</strong> runs the compiled DLL against generated PE images and mocked Windows APIs, checking bounded memory writes, initialization idempotence, failure rollback, page protection, and actor-count/register behavior. Synthetic fixtures are not independently tested game versions.</p>
+  <p>Windows/ASI Loader integration and in-game behavior of this compiled release have not been tested here. See <a href="validation.md">validation.md</a> for the validation boundary and <a href="BUILDING.md">BUILDING.md</a> for build and test instructions.</p>
+
+  <h2 id="removal">Removal</h2>
+  <p>Close the game, remove <code>BioShock2HDCombatCrashFix.asi</code>, and relaunch. An optional log can also be deleted. The plugin does not edit saves, registry entries, or frame-rate settings. Installing, replacing, or unloading it during gameplay is unsupported.</p>
+</main>
+<footer>
+  <p>Copyright &copy; 2026 eqagunn. Released under the <a href="LICENSE">MIT License</a>.</p>
+  <p>BioShock, FMOD, and Ultimate ASI Loader belong to their respective owners. This is an independent community modification.</p>
+</footer>
+</body>
+</html>

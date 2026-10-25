@@ -1,0 +1,3 @@
+LIBRARY BioShock2HDCombatCrashFix.asi
+EXPORTS
+    InitializeASI
