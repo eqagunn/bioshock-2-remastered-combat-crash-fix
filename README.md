@@ -8,6 +8,10 @@ An ASI plugin targeting invalid-memory reads observed in the game's audio callba
 
 The plugin patches the running process. The game executable on disk stays unchanged, and no configuration file is required.
 
+## Download
+
+Download the mod from [GitHub Releases](https://github.com/eqagunn/bioshock-2-remastered-combat-crash-fix/releases) or [Nexus Mods](https://www.nexusmods.com/bioshock2/mods/79).
+
 ## Installation
 
 1. Close the game.
